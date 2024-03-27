@@ -2,13 +2,28 @@ require("dotenv").config()
 const fs = require("node:fs/promises")
 const inq = require("@inquirer/prompts")
 const { spawn } = require("node:child_process")
+const { homedir,platform } = require("node:os")
+const path = require("node:path")
 
-const generateRemoteUrl = (s) => `http://${process.env.REMOTE_TEMPLATE.replace("{{name}}",s)}/_next/static/\${location}/remoteEntry.js`
+const generateRemoteUrl = (s) => `http://${process.env.REMOTE_TEMPLATE.replace("{{name}}", s)}/_next/static/\${location}/remoteEntry.js`
 const generateLocalUrl = (p) => `http://localhost:${p}/_next/static/\${location}/remoteEntry.js`
+const routesDir = process.env.ROUTES_DIR;
+const os = platform === "win32" ? 'win32':"posix" 
+let routes = null;
+try {
+  routes = require(routesDir)
+}catch{
+  routes= null;
+}
+
 
 async function init() {
-
-  const dirs = (await fs.readdir(".")).filter((s) => !s.includes(".") && s !== "node_modules" && s !== "app-mfbase")
+  let dirs = []
+  if(!routes)
+   dirs = (await fs.readdir(".")).filter((s) => !s.includes(".") && s !== "node_modules" && s !== "app-mfbase")
+  else{
+    dirs = routes.map(r=>homedir().concat(`/${r}`))
+  }
 
   const pull_repos = (await inq.input({
     message: "Do you want to pull repos? (y/n):",
@@ -22,7 +37,7 @@ async function init() {
 
   const answer = await inq.checkbox({
     message: "Select apps to start",
-    choices: dirs.map((d) => ({ name: d, value: d }))
+    choices: dirs.map((d) => ({ name: routes? path[os].basename(d) : d, value: d }))
   })
 
 
@@ -86,9 +101,8 @@ async function init() {
         })
 
       const new_file_lines = [...s.file_lines.map(l => l.content)]
-      lines_to_process.forEach(async (l, i) => {
-        let line_to_write = l.content.split("@")[0].concat("@").concat(l.newUrl).concat("`")
-        if (i !== lines_to_process.length - 1) line_to_write += ','
+      lines_to_process.forEach(async (l) => {
+        let line_to_write = l.content.split("@")[0].concat("@").concat(l.newUrl).concat("`,")
         new_file_lines[l.number] = line_to_write
       })
 
