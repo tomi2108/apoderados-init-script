@@ -1,0 +1,16 @@
+{
+  "name": "apoderados-mf-init-script",
+  "version": "1.0.0",
+  "description": "",
+  "main": "init.js",
+  "scripts": {
+    "start": "node init.js",
+    "generate-session": "node init-tmux.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@inquirer/prompts": "^4.3.0",
+    "dotenv": "^16.4.5"
+  }
+}
