@@ -2,27 +2,27 @@ require("dotenv").config()
 const fs = require("node:fs/promises")
 const inq = require("@inquirer/prompts")
 const { spawn } = require("node:child_process")
-const { homedir,platform } = require("node:os")
+const { homedir, platform } = require("node:os")
 const path = require("node:path")
 
 const generateRemoteUrl = (s) => `http://${process.env.REMOTE_TEMPLATE.replace("{{name}}", s)}/_next/static/\${location}/remoteEntry.js`
 const generateLocalUrl = (p) => `http://localhost:${p}/_next/static/\${location}/remoteEntry.js`
 const routesDir = process.env.ROUTES_DIR;
-const os = platform === "win32" ? 'win32':"posix" 
+const os = platform === "win32" ? 'win32' : "posix"
 let routes = null;
 try {
   routes = require(routesDir)
-}catch{
-  routes= null;
+} catch {
+  routes = null;
 }
 
 
 async function init() {
   let dirs = []
-  if(!routes)
-   dirs = (await fs.readdir(".")).filter((s) => !s.includes(".") && s !== "node_modules" && s !== "app-mfbase")
-  else{
-    dirs = routes.map(r=>homedir().concat(`/${r}`))
+  if (!routes)
+    dirs = (await fs.readdir(".")).filter((s) => !s.includes(".") && s !== "node_modules" && s !== "app-mfbase")
+  else {
+    dirs = routes.map(r => homedir().concat(`/${r}`))
   }
 
   const pull_repos = (await inq.input({
@@ -35,18 +35,38 @@ async function init() {
     default: "n"
   })) === "y"
 
+  const start_apps = (await inq.input({
+    message: "Do you want to start apps? (y/n):",
+    default: "n"
+  })) === "y"
+
   const answer = await inq.checkbox({
-    message: "Select apps to start",
-    choices: dirs.map((d) => ({ name: routes? path[os].basename(d) : d, value: d }))
+    message: "Select apps to initialize:",
+    choices: dirs.map((d) => ({ name: routes ? path[os].basename(d) : d, value: d }))
   })
 
+  function removeCommand(fileOrDir) {
+    const recursive  = !fileOrDir.includes(".")
+    const command = os ==='posix' ? "rm {{flag}} {{file}}" : "if(Test-Path({{file}})){Remove-item {{file}}}{{flag}}"
+    const flag = os==='posix' ? "-rf":"-Recurse"
+  return command.replace("{{file}}",fileOrDir).replace("{{flag}}",recursive?flag:"")
+  }
+  
 
   function getCommand(service) {
     let cmd = `cd ${service}`
     if (pull_repos) cmd += " && git pull"
-    if (install_dependencies) cmd += " && npm i"
-    cmd += " && npm run dev"
+    if (install_dependencies) cmd += ` && ${removeCommand("node_modules")} && ${removeCommand("package-lock.json")} &&  npm i`
+    if (start_apps) cmd += " && npm run dev"
     return cmd
+  }
+
+  function isServiceInLine(service, line) {
+    return getKey(line) === service
+  }
+
+  function getKey(line) {
+    return line.trim().split(":")[0]
   }
 
   function getPort(index) {
@@ -62,16 +82,8 @@ async function init() {
     runCommand: answer.includes(a) ? getCommand(a) : null,
   }))
 
-  function isServiceInLine(service, line) {
-    return getKey(line) === service
-  }
-
-  function getKey(line) {
-    return line.trim().split(":")[0]
-  }
 
   const process_reading = async (s) => {
-
     const next_config = await fs.readFile(`${s.dir}/next.config.js`)
     const file_lines = next_config.toString().split("\n").map((l, i) => ({ number: i, content: l }))
 
@@ -85,32 +97,33 @@ async function init() {
 
   const promises = services.map(process_reading)
   Promise.all(promises).then(() => {
+    if (start_apps) {
 
-    services.forEach(async (s) => {
-      const lines_to_process = s.file_lines
-        .filter((l) => services.some((s2) => isServiceInLine(s2.name, l.content)))
-        .map(l => {
-          const matching_service = services.find(s2 => isServiceInLine(s2.name, l.content))
+      services.forEach(async (s) => {
+        const lines_to_process = s.file_lines
+          .filter((l) => services.some((s2) => isServiceInLine(s2.name, l.content)))
+          .map(l => {
+            const matching_service = services.find(s2 => isServiceInLine(s2.name, l.content))
 
-          return {
-            ...l,
-            newUrl: matching_service.runInLocal ?
-              generateLocalUrl(matching_service.port)
-              : generateRemoteUrl(matching_service.dir)
-          }
+            return {
+              ...l,
+              newUrl: matching_service.runInLocal ?
+                generateLocalUrl(matching_service.port)
+                : generateRemoteUrl(matching_service.dir)
+            }
+          })
+
+        const new_file_lines = [...s.file_lines.map(l => l.content)]
+        lines_to_process.forEach(async (l) => {
+          let line_to_write = l.content.split("@")[0].concat("@").concat(l.newUrl).concat("`,")
+          new_file_lines[l.number] = line_to_write
         })
 
-      const new_file_lines = [...s.file_lines.map(l => l.content)]
-      lines_to_process.forEach(async (l) => {
-        let line_to_write = l.content.split("@")[0].concat("@").concat(l.newUrl).concat("`,")
-        new_file_lines[l.number] = line_to_write
+        const file_string = new_file_lines.join("\n")
+        if (file_string)
+          await fs.writeFile(`${s.dir}/next.config.js`, file_string)
       })
-
-      const file_string = new_file_lines.join("\n")
-      if (file_string)
-        await fs.writeFile(`${s.dir}/next.config.js`, file_string)
-    })
-
+    }
 
 
     services.forEach((service) => {
